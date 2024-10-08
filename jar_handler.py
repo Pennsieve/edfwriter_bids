@@ -7,12 +7,16 @@ import fnmatch
 import pandas as pd
 from numpy import genfromtxt
 import glob
+import logging
+
 
 # Local import
 from components.internal.BIDS_handler import *
 from components.internal.observer_handler import *
 from components.internal.exception_handler import *
 from components.internal.data_backends import *
+
+logging.basicConfig(level=logging.DEBUG)
 
 class jar_handler(Subject):
 
@@ -99,6 +103,7 @@ class jar_handler(Subject):
 
             # Pull out the relevant data pointers for required columns.
             self.jar_files = list(input_args['orig_filename'].values)
+            logging.info(self.jar_files)
 
             # Get the unique identifier if provided
             if 'start' in input_args.columns:
@@ -172,6 +177,9 @@ class jar_handler(Subject):
 
         # Load the data exists exception handler so we can avoid already downloaded data.
         DE = DataExists(self.data_record)
+        
+        self.rename_files_with_extension(self.jar_files)
+
 
         # Loop over the requested data
         for idx in range(len(self.jar_files)):
@@ -183,9 +191,13 @@ class jar_handler(Subject):
             except TypeError:
                 istart    = None
                 iduration = None
-
+            
+            
             if DE.check_default_records(self.jar_files[idx],istart,iduration):
-                self.read_jar_data(self.jar_files[idx])
+                self.run_jar(self.jar_files[idx])
+                #self.load_csv_files(self.jar_files[idx])
+                self.create_edf_files(self.jar_files[idx])
+                
                         
                 # If successful, notify data observer. Else, add a skip
                 if self.success_flag:
@@ -195,35 +207,42 @@ class jar_handler(Subject):
             else:
                 print(f"Skipping {self.jar_files[idx]}.")
                 self.data_list.append(None)
+        
                 
 ## Start of what Julia changed
-    def read_jar_data(self,orig_filename):
+#def read_jar_data(self,orig_filename):
+#def read_jar_data(self,data_file):
+#need to remove .mef files from folder at the end
+
+    # Function that removes spaces from filename            
+    def rename_files_with_extension(self,jar_files):
+        extension = '.mef'
+        files_name=str(self.jar_files)[2:-2]
+        # Iterate over all files in the specified directory
+        for root, dirs, files in os.walk(files_name):
+            for filename in files:
+                # Check if the file has the specified extension
+                if fnmatch.fnmatch(filename, f'*{extension}'):
+                    # Create the new filename by replacing spaces and dashes with underscores
+                    new_filename = filename.replace(' ', '_').replace('-', '_')
+                        
+                    # Create full paths for the old and new filenames
+                    old_file = os.path.join(root, filename)
+                    new_file = os.path.join(root, new_filename)
+                        
+                    # Rename the file if the new name is different
+                    if old_file != new_file:
+                        print(f'Renaming: {old_file} to {new_file}')
+                        os.rename(old_file, new_file)
+                        
+                        
+    def run_jar(self,jar_files):
         
-        # Function that removes spaces from filename            
-        def rename_files_with_extension(directory, extension):
-            # Iterate over all files in the specified directory
-            for root, dirs, files in os.walk(directory):
-                for filename in files:
-                    # Check if the file has the specified extension
-                    if fnmatch.fnmatch(filename, f'*{extension}'):
-                        # Create the new filename by replacing spaces and dashes with underscores
-                        new_filename = filename.replace(' ', '_').replace('-', '_')
-                        
-                        # Create full paths for the old and new filenames
-                        old_file = os.path.join(root, filename)
-                        new_file = os.path.join(root, new_filename)
-                        
-                        # Rename the file if the new name is different
-                        if old_file != new_file:
-                            print(f'Renaming: {old_file} to {new_file}')
-                            os.rename(old_file, new_file)
-                            
-                    
             try:
                 jar_file_path = '/Users/juliadengler/Documents/test/MEFStreamer.jar'  
                 
                 # Build the command to run the jar file
-                command = ['java', '-jar', jar_file_path] + list(self.orig_filename)
+                command = ['java', '-jar', jar_file_path] + list(self.jar_files)
                     
                 # Execute the command
                 result = subprocess.run(command, capture_output=True, text=True, check=True)
@@ -237,49 +256,97 @@ class jar_handler(Subject):
                 print(f"Return code: {e.returncode}")
                 print(f"Output: {e.output}")
         
-        # Read in csv files        
-        def load_csv_files(directory):
-            keywords = ['header_info', 'values_data']  
-            all_filenames = []
-            # Iterate through the directory
-            for filename in os.listdir(directory):
-                if keywords[0] in filename:
-                    file_path = os.path.join(directory, filename)
-                    print(f"Loading: {file_path}")
-                    # Load the CSV file into a DataFrame
-                    df_name = filename.replace('.csv', '')  # Remove .csv for the variable name
-                    print(df_name)
-                    all_filenames.append(df_name)
-                    globals()[df_name] = pd.read_csv(file_path, index_col=False)
+    # Read in csv files        
+    # def load_csv_files(self,jar_files):
+    #         keywords = ['header_info', 'values_data']  
+    #         all_filenames = []
+    #         files_names=str(self.jar_files)[2:-2]
+    #         # Iterate through the directory
+    #         for filename in os.listdir(files_names):
+    #             if keywords[0] in filename:
+    #                 file_path = os.path.join(files_names, filename)
+    #                 print(f"Loading: {file_path}")
+    #                 # Load the CSV file into a DataFrame
+    #                 df_name = filename.replace('.csv', '')  # Remove .csv for the variable name
+    #                 print(df_name)
+    #                 all_filenames.append(df_name)
+    #                 globals()[df_name] = pd.read_csv(file_path, index_col=False)
                     
-                elif keywords[1] in filename:
-                    file_path = os.path.join(directory, filename)
-                    print(f"Loading: {file_path}")
-                    # Load the CSV file into a DataFrame
-                    df_name = filename.replace('.csv', '')  # Remove .csv for the variable name
-                    globals()[df_name] = genfromtxt(file_path, delimiter=',', dtype=None, skip_header=1)    
-
-    extensions='.mef'
-    rename_files_with_extension(self.orig_filename, extensions)    
-    load_csv_files(self.orig_filename)
-
-    self.channels = []
-    arr=np.array([])
-    for name, in all_filenames:
-        # Read header info
-        header_df = globals()[name]
-        self.channels.append(header_df["Channel Name"].iloc[0])
-        # Add a way to check across multiple channels
-        self.fs= int(header_df["Sampling Frequency"].iloc[0])
-        #Read Value Data
-        values=name.replace('header_info', 'values_data')
-        values_array=globals()[values]
-        self.data=np.append(arr, values)
-        
-
-## End of what Julia changed
+    #             elif keywords[1] in filename:
+    #                 file_path = os.path.join(files_names, filename)
+    #                 print(f"Loading: {file_path}")
+    #                 # Load the CSV file into a DataFrame
+    #                 df_name = filename.replace('.csv', '')  # Remove .csv for the variable name
+    #                 globals()[df_name] = genfromtxt(file_path, delimiter=',', dtype=None, skip_header=1)
+                    
+   # Varun's reading in of csvs that works
+    def create_edf_files(self,data_file):
         
         try:
+            
+            self.data = []
+            self.channels = []
+            
+            for file in os.listdir(data_file):
+                
+                if file.endswith('values_data.csv'):
+                    
+                    data_file_w_file = os.path.join(data_file, file)
+                    channel_data = PD.read_csv(data_file_w_file,index_col=False).values
+                    print(f"Loading: {data_file_w_file}")
+                    self.data.append(channel_data)
+                    
+                elif file.endswith('header_info.csv'):
+                    
+                    header_file_w_file = os.path.join(data_file, file)
+                    header_data = PD.read_csv(header_file_w_file,index_col=False)
+                    print(f"Loading: {header_file_w_file}")
+                    self.channels.append(header_data["Channel Name"].iloc[0])
+                    self.fs = int(header_data["Sampling Frequency"].iloc[0])
+                
+                else:
+                    continue
+             
+            # not sure if this is needed
+            self.data = np.hstack(self.data)
+            
+            self.success_flag = True
+            
+        except Exception as e:
+            self.success_flag = False
+            
+            if self.args.debug:
+                print(f"Load error {e}")
+        
+        logging.debug("Finished Reading")
+        #logging.info(self.channels)
+        #logging.info(self.fs)
+                
+                
+# Julia's reading in of csvs that doesn't work  
+    # def create_edf_files(self):
+        
+    #     try: 
+    #         self.channels = []
+    #         arr=np.array([])
+    #         for name, in all_filenames:
+    #             # Read header info
+    #             header_df = globals()[name]
+    #             self.channels.append(header_df["Channel Name"].iloc[0])
+    #             # Add a way to check across multiple channels
+    #             self.fs= int(header_df["Sampling Frequency"].iloc[0])
+    #             #Read Value Data
+    #             values=name.replace('header_info', 'values_data')
+    #             values_array=globals()[values]
+    #             self.data=np.append(arr, values_array)
+    #         self.success_flag =True
+                
+    #     except Exception as e:
+    #         self.success_flag = False
+    #         if self.args.debug:
+    #             print(f"Load error {e}")
+        
+        # try:
 
             #header_file   = data_file.split('values_data')[0]+"header_info.csv"
            # self.data     = PD.read_csv(data_file).values
@@ -287,11 +354,13 @@ class jar_handler(Subject):
             #self.fs       = PD.read_csv(header_file)['Sampling Frequency'].values
            # self.channels  = ['Sin 10Hz']
             #self.fs        = 800
-            self.success_flag = True
-        except Exception as e:
-            self.success_flag = False
-            if self.args.debug:
-                print(f"Load error {e}")
+        #     self.success_flag = True
+        # except Exception as e:
+        #     self.success_flag = False
+        #     if self.args.debug:
+        #         print(f"Load error {e}")
+        
+## End of what Julia changed
 
     def save_data(self):
         """
@@ -299,6 +368,7 @@ class jar_handler(Subject):
         """
         
         # Loop over the data, assign keys, and save
+        logging.debug('Starting Save')
         self.new_data_record = self.data_record.copy()
         for idx,iraw in enumerate(self.data_list):
             if iraw != None:
@@ -333,3 +403,6 @@ class jar_handler(Subject):
                     # Add the datarow to the records
                     self.current_record  = self.BH.make_records('jar_file')
                     self.new_data_record = PD.concat((self.new_data_record,self.current_record))
+                
+                logging.debug('Ending Save')
+                
